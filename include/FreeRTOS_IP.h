@@ -119,6 +119,7 @@
         size_t xDataLength;                        /**< Starts by holding the total Ethernet frame length, then the UDP/TCP payload length. */
         uint16_t usPort;                           /**< Source or destination port, depending on usage scenario. */
         uint16_t usBoundPort;                      /**< The port to which a transmitting socket is bound. */
+        uint8_t ucTTL;                             /**< Outgoing TimeToLive value. Required for multicasts. */
         #if ( ipconfigUSE_LINKED_RX_MESSAGES != 0 )
             struct xNETWORK_BUFFER * pxNextBuffer; /**< Possible optimisation for expert users - requires network driver support. */
         #endif

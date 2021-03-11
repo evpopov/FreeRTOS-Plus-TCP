@@ -454,6 +454,11 @@ Socket_t FreeRTOS_socket( BaseType_t xDomain,
                             pxSocket->u.xUDP.uxMaxPackets = ( UBaseType_t ) ipconfigUDP_MAX_RX_PACKETS;
                         }
                     #endif /* ipconfigUDP_MAX_RX_PACKETS > 0 */
+
+                    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                        pxSocket->u.xUDP.ucTTL = ipconfigUDP_TIME_TO_LIVE;
+                        vListInitialise( &pxSocket->u.xUDP.xMulticastGroupsList );
+                    #endif
                 }
 
                 vListInitialiseItem( &( pxSocket->xBoundSocketListItem ) );
@@ -1111,6 +1116,9 @@ int32_t FreeRTOS_sendto( Socket_t xSocket,
                 pxNetworkBuffer->usPort = pxDestinationAddress->sin_port;
                 pxNetworkBuffer->usBoundPort = ( uint16_t ) socketGET_SOCKET_PORT( pxSocket );
                 pxNetworkBuffer->ulIPAddress = pxDestinationAddress->sin_addr;
+                #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                    pxNetworkBuffer->ucTTL = pxSocket->u.xUDP.ucTTL;
+                #endif
 
                 /* The socket options are passed to the IP layer in the
                  * space that will eventually get used by the Ethernet header. */
@@ -1538,6 +1546,18 @@ void * vSocketClose( FreeRTOS_Socket_t * pxSocket )
             }
         #endif /* ipconfigETHERNET_DRIVER_FILTERS_PACKETS */
     }
+
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+        /* Un-register all multicast groups that might have been added. */
+        if( pxSocket->ucProtocol == ( uint8_t ) FREERTOS_IPPROTO_UDP )
+        {
+            while( listCURRENT_LIST_LENGTH( &( pxSocket->u.xUDP.xMulticastGroupsList ) ) > 0U )
+            {
+                MCastGroupDesc_t * pMCD = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, listGET_OWNER_OF_HEAD_ENTRY( &( pxSocket->u.xUDP.xMulticastGroupsList ) ) );
+                vModifyMulticastMembership( pMCD, eSocketOptDropMembership );
+            }
+        }
+    #endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
 
     /* Now the socket is not bound the list of waiting packets can be
      * drained. */
@@ -2048,6 +2068,113 @@ BaseType_t FreeRTOS_setsockopt( Socket_t xSocket,
                     xReturn = 0;
                     break;
             #endif /* ipconfigUSE_TCP == 1 */
+
+            #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                case FREERTOS_SO_IP_MULTICAST_TTL:
+
+                    if( ( pxSocket->ucProtocol != ( uint8_t ) FREERTOS_IPPROTO_UDP ) || ( uxOptionLength != sizeof( uint8_t ) ) )
+                    {
+                        break;     /* will return -pdFREERTOS_ERRNO_EINVAL */
+                    }
+
+                    /* Override the default TTL value with this one. */
+                    pxSocket->u.xUDP.ucTTL = *( ( uint8_t * ) pvOptionValue );
+
+                    xReturn = 0;
+                    break;
+
+                case FREERTOS_SO_IP_ADD_MEMBERSHIP:
+                   {
+                       if( ( pxSocket->ucProtocol != ( uint8_t ) FREERTOS_IPPROTO_UDP ) || ( uxOptionLength != sizeof( struct freertos_ip_mreq ) ) )
+                       {
+                           break;  /* will return -pdFREERTOS_ERRNO_EINVAL */
+                       }
+
+                       struct freertos_ip_mreq * pMReq = ( struct freertos_ip_mreq * ) pvOptionValue;
+
+                       if( pdFALSE == xIsIPv4Multicast( pMReq->imr_multiaddr.sin_addr ) )
+                       {
+                           break;  /* will return -pdFREERTOS_ERRNO_EINVAL */
+                       }
+
+                       /* Allocate some RAM to remember the multicast group that is being registered */
+                       MCastGroupDesc_t * pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, pvPortMalloc( sizeof( MCastGroupDesc_t ) ) );
+
+                       if( NULL == pxMCG )
+                       {
+                           xReturn = -pdFREERTOS_ERRNO_ENOMEM;
+                           break;
+                       }
+
+                       /* Store this whole option in case we are later called to drop this membership.
+                        * This data also needs to be stored so that incoming packets can be filtered properly.
+                        * This can be done more efficiently, but storing the whole struct will be more portable
+                        * in the multi-interface, dual-stack case.*/
+                       ( void ) memcpy( ( void * ) &pxMCG->mreq, pvOptionValue, uxOptionLength );
+                       listSET_LIST_ITEM_OWNER( &( pxMCG->xListItem ), ( void * ) pxMCG );
+                       /* listSET_LIST_ITEM_VALUE( &( pxMCG->xListItem ), pMReq->imr_multiaddr.sin_addr ); */
+                       pxMCG->pxSocket = pxSocket;
+
+                       IPStackEvent_t xSockOptsEvent = { eSocketOptAddMembership, ( void * ) pxMCG };
+
+                       if( xSendEventStructToIPTask( &( xSockOptsEvent ), portMAX_DELAY ) != pdPASS )
+                       {
+                           vPortFree( pxMCG );
+                           xReturn = -1;
+                       }
+                       else
+                       {
+                           xReturn = 0;
+                       }
+                   }
+                   break;
+
+                case FREERTOS_SO_IP_DROP_MEMBERSHIP:
+                   {
+                       if( ( pxSocket->ucProtocol != ( uint8_t ) FREERTOS_IPPROTO_UDP ) || ( uxOptionLength != sizeof( struct freertos_ip_mreq ) ) )
+                       {
+                           break;  /* will return -pdFREERTOS_ERRNO_EINVAL */
+                       }
+
+                       struct freertos_ip_mreq * pMReq = ( struct freertos_ip_mreq * ) pvOptionValue;
+
+                       if( pdFALSE == xIsIPv4Multicast( pMReq->imr_multiaddr.sin_addr ) )
+                       {
+                           break;  /* will return -pdFREERTOS_ERRNO_EINVAL */
+                       }
+
+                       /* Allocate some RAM to remember the multicast group that is being registered */
+                       MCastGroupDesc_t * pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, pvPortMalloc( sizeof( MCastGroupDesc_t ) ) );
+
+                       if( NULL == pxMCG )
+                       {
+                           xReturn = -pdFREERTOS_ERRNO_ENOMEM;
+                           break;
+                       }
+
+                       /* Store this whole option in case we are later called to drop this membership.
+                        * This data also needs to be stored so that incoming packets can be filtered properly.
+                        * This can be done more efficiently, but storing the whole struct will be more portable
+                        * in the multi-interface, dual-stack case.*/
+                       ( void ) memcpy( ( void * ) &pxMCG->mreq, pvOptionValue, uxOptionLength );
+                       listSET_LIST_ITEM_OWNER( &( pxMCG->xListItem ), ( void * ) pxMCG );
+                       /* listSET_LIST_ITEM_VALUE( &( pxMCG->xListItem ), pMReq->imr_multiaddr.sin_addr ); */
+                       pxMCG->pxSocket = pxSocket;
+
+                       IPStackEvent_t xSockOptsEvent = { eSocketOptDropMembership, ( void * ) pxMCG };
+
+                       if( xSendEventStructToIPTask( &( xSockOptsEvent ), portMAX_DELAY ) != pdPASS )
+                       {
+                           vPortFree( pxMCG );
+                           xReturn = -1;
+                       }
+                       else
+                       {
+                           xReturn = 0;
+                       }
+                   }
+                   break;
+            #endif /* (ipconfigSUPPORT_IP_MULTICAST != 0) */
 
         default:
             /* No other options are handled. */

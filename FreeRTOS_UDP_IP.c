@@ -215,6 +215,10 @@ void vProcessGeneratedUDPPacket( NetworkBufferDescriptor_t * const pxNetworkBuff
                 }
             #endif
 
+            #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                pxIPHeader->ucTimeToLive = pxNetworkBuffer->ucTTL;
+            #endif
+
             #if ( ipconfigDRIVER_INCLUDED_TX_IP_CHECKSUM == 0 )
                 {
                     pxIPHeader->usHeaderChecksum = 0U;
@@ -306,6 +310,40 @@ BaseType_t xProcessReceivedUDPPacket( NetworkBufferDescriptor_t * pxNetworkBuffe
 
     /* Caller must check for minimum packet size. */
     pxSocket = pxUDPSocketLookup( usPort );
+
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+
+        /* If this incoming packet is a multicast, we may have a socket for the port, but we still need
+         * to ensure the socket is subscribed to that particular multicast group. Note: Since this stack
+         * does not support port reusing, we don't have to worry about two UDP sockets bound to the exact same
+         * local port, but subscribed to different multicast groups. If this was allowed, this check
+         * would have to be moved to the pxUDPSocketLookup() function itself. */
+        if( ( pxSocket != NULL ) && ( xIsIPv4Multicast( pxUDPPacket->xIPHeader.ulDestinationIPAddress ) ) )
+        {
+            /* Note: There is not need for vTaskSuspendAll/xTaskResumeAll here because only the IPTask
+             * touches the socket's multicast groups list directly. */
+            const ListItem_t * pxIterator;
+            const ListItem_t * xEnd = listGET_END_MARKER( &( pxSocket->u.xUDP.xMulticastGroupsList ) );
+
+            for( pxIterator = ( const ListItem_t * ) listGET_NEXT( xEnd );
+                 pxIterator != ( const ListItem_t * ) xEnd;
+                 pxIterator = ( const ListItem_t * ) listGET_NEXT( pxIterator ) )
+            {
+                MCastGroupDesc_t * pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, listGET_LIST_ITEM_OWNER( pxIterator ) );
+
+                if( pxMCG->mreq.imr_multiaddr.sin_addr == pxUDPPacket->xIPHeader.ulDestinationIPAddress )
+                {
+                    break;
+                }
+            }
+
+            if( pxIterator == ( const ListItem_t * ) xEnd )
+            {
+                /* This socket is not subscribed to this multicast group. Nullify the result from pxUDPSocketLookup() */
+                pxSocket = NULL;
+            }
+        }
+    #endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
 
     if( pxSocket != NULL )
     {

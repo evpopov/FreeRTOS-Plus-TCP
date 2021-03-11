@@ -40,6 +40,8 @@
 
 /* The following function is defined only when BufferAllocation_1.c is linked in the project. */
     BaseType_t xGetPhyLinkStatus( void );
+    BaseType_t xEMAC_AddMulticastAddress( uint8_t * pMulticastMacAddrBytes );
+    BaseType_t xEMAC_RemoveMulticastAddress( uint8_t * pMulticastMacAddrBytes );
 
     #ifdef __cplusplus
         } /* extern "C" */

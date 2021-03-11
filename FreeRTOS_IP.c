@@ -65,12 +65,23 @@
 #endif
 
 /* ICMP protocol definitions. */
-#define ipICMP_ECHO_REQUEST                 ( ( uint8_t ) 8 ) /**< ICMP echo request. */
-#define ipICMP_ECHO_REPLY                   ( ( uint8_t ) 0 ) /**< ICMP echo reply. */
+#define ipICMP_ECHO_REQUEST            ( ( uint8_t ) 8 )      /**< ICMP echo request. */
+#define ipICMP_ECHO_REPLY              ( ( uint8_t ) 0 )      /**< ICMP echo reply. */
+
+/* IGMP protocol definitions. */
+#define ipIGMP_MEMBERSHIP_QUERY        ( ( uint8_t ) 0x11U )      /**< IGMP membership query. */
+#define ipIGMP_MEMBERSHIP_REPORT_V1    ( ( uint8_t ) 0x12U )      /**< IGMP v1 and v2 membership report. */
+#define ipIGMP_MEMBERSHIP_REPORT_V2    ( ( uint8_t ) 0x16U )      /**< IGMP v1 and v2 membership report. */
+#define ipIGMP_MEMBERSHIP_REPORT_V3    ( ( uint8_t ) 0x22U )      /**< IGMP v3 membership report. */
 
 /* IPv4 multi-cast addresses range from 224.0.0.0.0 to 240.0.0.0. */
-#define ipFIRST_MULTI_CAST_IPv4             0xE0000000UL /**< Lower bound of the IPv4 multicast address. */
-#define ipLAST_MULTI_CAST_IPv4              0xF0000000UL /**< Higher bound of the IPv4 multicast address. */
+#define ipFIRST_MULTI_CAST_IPv4        0xE0000000UL      /**< Lower bound of the IPv4 multicast address. */
+#define ipLAST_MULTI_CAST_IPv4         0xF0000000UL      /**< Higher bound of the IPv4 multicast address. */
+#if ( ipconfigBYTE_ORDER == pdFREERTOS_BIG_ENDIAN )
+    #define ipIGMP_IP_ADDR             0xE0000001UL
+#else
+    #define ipIGMP_IP_ADDR             0x010000E0UL
+#endif /* ipconfigBYTE_ORDER == pdFREERTOS_BIG_ENDIAN */
 
 /* The first byte in the IPv4 header combines the IP version (4) with
  * with the length of the IP header. */
@@ -219,6 +230,14 @@ static eFrameProcessingResult_t prvProcessIPPacket( IPPacket_t * pxIPPacket,
  */
     static eFrameProcessingResult_t prvProcessICMPPacket( ICMPPacket_t * const pxICMPPacket );
 #endif /* ( ipconfigREPLY_TO_INCOMING_PINGS == 1 ) || ( ipconfigSUPPORT_OUTGOING_PINGS == 1 ) */
+
+#if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+
+/*
+ * Process incoming IGMP packets.
+ */
+    static eFrameProcessingResult_t prvProcessIGMPPacket( IGMPPacket_t * const pxIGMPPacket );
+#endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
 
 /*
  * Turns around an incoming ping request to convert it into a ping reply.
@@ -593,6 +612,22 @@ static void prvIPTask( void * pvParameters )
             case eNoEvent:
                 /* xQueueReceive() returned because of a normal time-out. */
                 break;
+
+                #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                    case eSocketOptAddMembership:
+                       {
+                           MCastGroupDesc_t * pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, xReceivedEvent.pvData );
+                           vModifyMulticastMembership( pxMCG, eSocketOptAddMembership );
+                           break;
+                       }
+
+                    case eSocketOptDropMembership:
+                       {
+                           MCastGroupDesc_t * pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, xReceivedEvent.pvData );
+                           vModifyMulticastMembership( pxMCG, eSocketOptDropMembership );
+                           break;
+                       }
+                #endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0) */
 
             default:
                 /* Should not get here. */
@@ -1652,6 +1687,12 @@ static void prvProcessNetworkDownEvent( void )
             }
         #endif
     }
+
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+        MACAddress_t IGMP_MacAddress;
+        vSetMultiCastIPv4MacAddress( ipIGMP_IP_ADDR, IGMP_MacAddress.ucBytes );
+        xEMAC_AddMulticastAddress( IGMP_MacAddress.ucBytes );
+    #endif
 }
 /*-----------------------------------------------------------*/
 
@@ -1832,6 +1873,108 @@ void vSetMultiCastIPv4MacAddress( uint32_t ulIPAddress,
 }
 /*-----------------------------------------------------------*/
 
+#if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+
+/**
+ * @brief Adds or drops a multicast group to/from a socket.
+ *
+ * @param[in] pxMulticastGroup: The multicast group descriptor. Also holds the socket that this call is for.
+ * @param[in] bAction: eSocketOptAddMembership or eSocketOptDropMembership.
+ */
+    void vModifyMulticastMembership( MCastGroupDesc_t * pxMulticastGroup,
+                                     uint8_t bAction )
+    {
+        if( ( eSocketOptAddMembership != bAction ) && ( eSocketOptDropMembership != bAction ) )
+        {
+            return;
+        }
+
+        FreeRTOS_Socket_t * pxSocket = pxMulticastGroup->pxSocket;
+        uint8_t bFreeInputItem = pdTRUE;
+        uint8_t bFreeMatchedItem = pdFALSE;
+
+        /* Go through the list of registered groups and try to locate the group that
+         * we are being asked to add or remove. This check prevents adding duplicates.*/
+        const ListItem_t * pxIterator;
+        const ListItem_t * xEnd = listGET_END_MARKER( &( pxSocket->u.xUDP.xMulticastGroupsList ) );
+        MCastGroupDesc_t * pxMCG;
+
+        for( pxIterator = ( const ListItem_t * ) listGET_NEXT( xEnd );
+             pxIterator != ( const ListItem_t * ) xEnd;
+             pxIterator = ( const ListItem_t * ) listGET_NEXT( pxIterator ) )
+        {
+            pxMCG = ipCAST_PTR_TO_TYPE_PTR( MCastGroupDesc_t, listGET_LIST_ITEM_OWNER( pxIterator ) );
+
+            if( pxMCG->mreq.imr_multiaddr.sin_addr == pxMulticastGroup->mreq.imr_multiaddr.sin_addr )
+            {
+                /* Found a match. If we need to remove this address, go ahead.
+                 * If we need to add it, it's already there, so just free the the descriptor to prevent memory leaks. */
+                if( eSocketOptDropMembership == bAction )
+                {
+                    ( void ) uxListRemove( &pxMCG->xListItem );
+
+                    /* Defer freeing this list item because when called from vSocketClose, this matching item
+                     * is the same as out input parameter item, and we need the input parameter item further
+                     * down when informing the network interface driver. */
+                    bFreeMatchedItem = pdTRUE;
+
+                    if( pxMulticastGroup == pxMCG )
+                    {
+                        bFreeInputItem = pdFALSE;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        if( eSocketOptAddMembership == bAction )
+        {
+            if( pxIterator == xEnd )
+            {
+                /* We are adding an item and we couldn't find an identical one. Simply add it. */
+                vListInsertEnd( &( pxSocket->u.xUDP.xMulticastGroupsList ), &( pxMulticastGroup->xListItem ) );
+                /* Inform the network driver */
+                uint8_t MCastDestMacBytes[ 6 ];
+                vSetMultiCastIPv4MacAddress( pxMulticastGroup->mreq.imr_multiaddr.sin_addr, MCastDestMacBytes );
+                xEMAC_AddMulticastAddress( MCastDestMacBytes );
+                bFreeInputItem = pdFALSE;
+            }
+            else
+            {
+                /* Adding, but found duplicate. No need to inform the network driver. */
+            }
+        }
+        else
+        {
+            if( pxIterator == xEnd )
+            {
+                /* Removing, but no match. No need to inform the network driver. */
+            }
+            else
+            {
+                /* Removing and found a match. */
+                /* Inform the network driver */
+                uint8_t MCastDestMacBytes[ 6 ];
+                vSetMultiCastIPv4MacAddress( pxMulticastGroup->mreq.imr_multiaddr.sin_addr, MCastDestMacBytes );
+                xEMAC_RemoveMulticastAddress( MCastDestMacBytes );
+            }
+        }
+
+        /* Free the message that was sent to us. */
+        if( bFreeInputItem )
+        {
+            vPortFree( pxMulticastGroup );
+        }
+
+        if( bFreeMatchedItem )
+        {
+            vPortFree( pxMCG );
+        }
+    }
+#endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0) */
+/*-----------------------------------------------------------*/
+
 /**
  * @brief Check whether this IP packet is to be allowed or to be dropped.
  *
@@ -1891,6 +2034,10 @@ static eFrameProcessingResult_t prvAllowIPPacket( const IPPacket_t * const pxIPP
                          /* Is it the LLMNR multicast address? */
                          ( ulDestinationIPAddress != ipLLMNR_IP_ADDR ) &&
                      #endif
+                     #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                         /* Is this a multicast packet? */
+                         ( pdFALSE == xIsIPv4Multicast( ulDestinationIPAddress ) ) &&
+                     #endif
                      /* Or (during DHCP negotiation) we have no IP-address yet? */
                      ( *ipLOCAL_IP_ADDRESS_POINTER != 0UL ) )
             {
@@ -1899,7 +2046,8 @@ static eFrameProcessingResult_t prvAllowIPPacket( const IPPacket_t * const pxIPP
             }
             else
             {
-                /* Packet is not fragmented, destination is this device. */
+                /* Packet is not fragmented, destination is this device, or a multicast group
+                 * that this device might be registered for. */
             }
         }
     #endif /* ipconfigETHERNET_DRIVER_FILTERS_PACKETS */
@@ -2104,6 +2252,25 @@ static eFrameProcessingResult_t prvProcessIPPacket( IPPacket_t * pxIPPacket,
                                 eReturn = eReleaseBuffer;
                             }
                         #endif /* ( ipconfigREPLY_TO_INCOMING_PINGS == 1 ) || ( ipconfigSUPPORT_OUTGOING_PINGS == 1 ) */
+                        break;
+
+                    case ipPROTOCOL_IGMP:
+
+                        /* The IP packet contained an IGMP frame.  */
+                        #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+                            if( pxNetworkBuffer->xDataLength >= sizeof( IGMPPacket_t ) )
+                            {
+                                /* Map the buffer onto a IGMP-Packet struct to easily access the
+                                 * fields of ICMP packet. */
+                                IGMPPacket_t * pxIGMPPacket = ipCAST_PTR_TO_TYPE_PTR( IGMPPacket_t, pxNetworkBuffer->pucEthernetBuffer );
+
+                                eReturn = prvProcessIGMPPacket( pxIGMPPacket );
+                            }
+                            else
+                            {
+                                eReturn = eReleaseBuffer;
+                            }
+                        #endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
                         break;
 
                     case ipPROTOCOL_UDP:
@@ -2337,6 +2504,39 @@ static eFrameProcessingResult_t prvProcessIPPacket( IPPacket_t * pxIPPacket,
     }
 
 #endif /* ( ipconfigREPLY_TO_INCOMING_PINGS == 1 ) || ( ipconfigSUPPORT_OUTGOING_PINGS == 1 ) */
+/*-----------------------------------------------------------*/
+
+#if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+
+/**
+ * @brief Process an IGMP packet.
+ *
+ * @param[in,out] pxIGMPPacket: The IP packet that contains the IGMP message.
+ *
+ * @return eReleaseBuffer This function always returns eReleaseBuffer as IGMP frames are
+ *                        never responded to immediately.
+ */
+    static eFrameProcessingResult_t prvProcessIGMPPacket( IGMPPacket_t * const pxIGMPPacket )
+    {
+        eFrameProcessingResult_t eReturn = eReleaseBuffer;
+
+        switch( pxIGMPPacket->xIGMPHeader.ucTypeOfMessage )
+        {
+            case ipIGMP_MEMBERSHIP_QUERY:
+               {
+                   extern uint32_t uiNumIGMP_Queries;
+                   uiNumIGMP_Queries++;
+                   break;
+               }
+
+            default:
+                break;
+        }
+
+        return eReturn;
+    }
+
+#endif /* ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
 /*-----------------------------------------------------------*/
 
 #if ( ipconfigDRIVER_INCLUDED_RX_IP_CHECKSUM == 1 )
@@ -3629,6 +3829,15 @@ ipDECL_CAST_PTR_FUNC_FOR_TYPE( ICMPPacket_t )
 /*-----------------------------------------------------------*/
 
 /**
+ * @brief Cast a given pointer to IGMPPacket_t type pointer.
+ */
+ipDECL_CAST_PTR_FUNC_FOR_TYPE( IGMPPacket_t )
+{
+    return ( IGMPPacket_t * ) pvArgument;
+}
+/*-----------------------------------------------------------*/
+
+/**
  * @brief Cast a given pointer to UDPPacket_t type pointer.
  */
 ipDECL_CAST_PTR_FUNC_FOR_TYPE( UDPPacket_t )
@@ -3756,6 +3965,20 @@ ipDECL_CAST_CONST_PTR_FUNC_FOR_TYPE( FreeRTOS_Socket_t )
     }
     /*-----------------------------------------------------------*/
 #endif /* ipconfigSUPPORT_SELECT_FUNCTION == 1 */
+
+#if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+
+/**
+ * @brief Cast a given constant pointer to MCastGroupDesc_t type pointer.
+ *
+ * @return The casted pointer.
+ */
+    ipDECL_CAST_PTR_FUNC_FOR_TYPE( MCastGroupDesc_t )
+    {
+        return ( MCastGroupDesc_t * ) pvArgument;
+    }
+#endif
+
 /** @} */
 
 /**

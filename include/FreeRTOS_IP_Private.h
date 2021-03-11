@@ -146,6 +146,21 @@
 
 
     #include "pack_struct_start.h"
+    struct xIGMP_HEADER
+    {
+        uint8_t ucTypeOfMessage;   /**< The IGMP type                     0 + 1 = 1 */
+        uint8_t ucMaxResponseTime; /**< Maximum time (sec) for responses. 1 + 1 = 2 */
+        uint16_t usChecksum;       /**< The checksum of whole IGMP packet 2 + 2 = 4 */
+        uint32_t uiGroupAddress;   /**< The multicast group address       4 + 4 = 8 */
+    }
+    #include "pack_struct_end.h"
+    typedef struct xIGMP_HEADER IGMPHeader_t;
+
+    extern ipDECL_CAST_PTR_FUNC_FOR_TYPE( IGMPHeader_t );
+    extern ipDECL_CAST_CONST_PTR_FUNC_FOR_TYPE( IGMPHeader_t );
+
+
+    #include "pack_struct_start.h"
     struct xUDP_HEADER
     {
         uint16_t usSourcePort;      /**< The source port                      0 + 2 = 2 */
@@ -219,6 +234,18 @@
     extern ipDECL_CAST_PTR_FUNC_FOR_TYPE( ICMPPacket_t );
 
     #include "pack_struct_start.h"
+    struct xIGMP_PACKET
+    {
+        EthernetHeader_t xEthernetHeader; /**< The Ethernet header of an IGMP packet. */
+        IPHeader_t xIPHeader;             /**< The IP header of an IGMP packet. */
+        IGMPHeader_t xIGMPHeader;         /**< The IGMP header of an IGMP packet. */
+    }
+    #include "pack_struct_end.h"
+    typedef struct xIGMP_PACKET IGMPPacket_t;
+
+    extern ipDECL_CAST_PTR_FUNC_FOR_TYPE( IGMPPacket_t );
+
+    #include "pack_struct_start.h"
     struct xUDP_PACKET
     {
         EthernetHeader_t xEthernetHeader; /**< UDP-Packet ethernet header  0 + 14 = 14 */
@@ -288,19 +315,21 @@
     typedef enum
     {
         eNoEvent = -1,
-        eNetworkDownEvent,  /* 0: The network interface has been lost and/or needs [re]connecting. */
-        eNetworkRxEvent,    /* 1: The network interface has queued a received Ethernet frame. */
-        eNetworkTxEvent,    /* 2: Let the IP-task send a network packet. */
-        eARPTimerEvent,     /* 3: The ARP timer expired. */
-        eStackTxEvent,      /* 4: The software stack has queued a packet to transmit. */
-        eDHCPEvent,         /* 5: Process the DHCP state machine. */
-        eTCPTimerEvent,     /* 6: See if any TCP socket needs attention. */
-        eTCPAcceptEvent,    /* 7: Client API FreeRTOS_accept() waiting for client connections. */
-        eTCPNetStat,        /* 8: IP-task is asked to produce a netstat listing. */
-        eSocketBindEvent,   /* 9: Send a message to the IP-task to bind a socket to a port. */
-        eSocketCloseEvent,  /*10: Send a message to the IP-task to close a socket. */
-        eSocketSelectEvent, /*11: Send a message to the IP-task for select(). */
-        eSocketSignalEvent, /*12: A socket must be signalled. */
+        eNetworkDownEvent,        /* 0: The network interface has been lost and/or needs [re]connecting. */
+        eNetworkRxEvent,          /* 1: The network interface has queued a received Ethernet frame. */
+        eNetworkTxEvent,          /* 2: Let the IP-task send a network packet. */
+        eARPTimerEvent,           /* 3: The ARP timer expired. */
+        eStackTxEvent,            /* 4: The software stack has queued a packet to transmit. */
+        eDHCPEvent,               /* 5: Process the DHCP state machine. */
+        eTCPTimerEvent,           /* 6: See if any TCP socket needs attention. */
+        eTCPAcceptEvent,          /* 7: Client API FreeRTOS_accept() waiting for client connections. */
+        eTCPNetStat,              /* 8: IP-task is asked to produce a netstat listing. */
+        eSocketBindEvent,         /* 9: Send a message to the IP-task to bind a socket to a port. */
+        eSocketCloseEvent,        /*10: Send a message to the IP-task to close a socket. */
+        eSocketSelectEvent,       /*11: Send a message to the IP-task for select(). */
+        eSocketSignalEvent,       /*12: A socket must be signalled. */
+        eSocketOptAddMembership,  /*13: Register a UDP socket to a multicast group. */
+        eSocketOptDropMembership, /*14: Unregister a UDP socket from a multicast group. */
     } eIPEvent_t;
 
 /**
@@ -693,6 +722,13 @@
                                               */
             FOnUDPSent_t pxHandleSent;       /**< Function pointer to handle the events after a successful send. */
         #endif /* ipconfigUSE_CALLBACKS */
+        #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+            uint8_t ucTTL; /**< Allows for multicast sockets to use a per-socket TTL value to limit the scope of the packet.
+                            * Example:
+                            * FreeRTOS_setsockopt( MCastSendSock, 0, FREERTOS_SO_IP_MULTICAST_TTL, ( void * ) &ucMulticastTTL, sizeof( uint8_t ) );
+                            */
+            List_t xMulticastGroupsList;
+        #endif
     } IPUDPSocket_t;
 
 /* Formally typedef'd as eSocketEvent_t. */
@@ -756,6 +792,28 @@
 
     extern ipDECL_CAST_PTR_FUNC_FOR_TYPE( FreeRTOS_Socket_t );
     extern ipDECL_CAST_CONST_PTR_FUNC_FOR_TYPE( FreeRTOS_Socket_t );
+
+
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+        struct freertos_ip_mreq
+        {
+            /* _EVP_ This can be simplified a bit on a single IF, IPv4 only system
+             * but keeping it more generic allows for future use in multi-IF dual-stack implementations. */
+            struct freertos_sockaddr imr_multiaddr; /* IP multicast address of a group */
+            struct freertos_sockaddr imr_interface; /* local IP address of the interface to be used */
+        };
+
+/** @brief The structure to hold a "descriptor" for a multicast group that a socket has registered to. */
+        typedef struct xMCastGroupDesc
+        {
+            struct freertos_ip_mreq mreq; /**< Struct for storing the original mreq structure that was sent to setsockopts() */
+            struct xLIST_ITEM xListItem;  /**< List struct. */
+            FreeRTOS_Socket_t * pxSocket;
+        } MCastGroupDesc_t;
+
+        extern ipDECL_CAST_PTR_FUNC_FOR_TYPE( MCastGroupDesc_t );
+    #endif /* if ( ipconfigSUPPORT_IP_MULTICAST != 0 ) */
+
 
     #if ( ipconfigUSE_TCP == 1 )
 
@@ -916,6 +974,12 @@
         extern ipDECL_CAST_CONST_PTR_FUNC_FOR_TYPE( SocketSelectMessage_t );
 
     #endif /* ipconfigSUPPORT_SELECT_FUNCTION */
+
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+        /* The following function handles multicast group socket options through the IP Task*/
+        void vModifyMulticastMembership( MCastGroupDesc_t * pxMulticastGroup,
+                                         uint8_t bAction );
+    #endif
 
     void vIPSetDHCPTimerEnableState( BaseType_t xEnableState );
     void vIPReloadDHCPTimer( uint32_t ulLeaseTime );

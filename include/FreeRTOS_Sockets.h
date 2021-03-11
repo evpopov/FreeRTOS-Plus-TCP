@@ -137,6 +137,12 @@
 
     #define FREERTOS_SO_SET_LOW_HIGH_WATER            ( 18 )
 
+    #if ( ipconfigSUPPORT_IP_MULTICAST != 0 )
+        #define FREERTOS_SO_IP_MULTICAST_TTL          ( 19 ) /*  */
+        #define FREERTOS_SO_IP_ADD_MEMBERSHIP         ( 20 ) /* Mark the socket as able to receive multicast messages from a multicast group address */
+        #define FREERTOS_SO_IP_DROP_MEMBERSHIP        ( 21 ) /* Remove membership from a multicast group address */
+    #endif /* (ipconfigSUPPORT_IP_MULTICAST != 0) */
+
     #define FREERTOS_NOT_LAST_IN_FRAGMENTED_PACKET    ( 0x80 ) /* For internal use only, but also part of an 8-bit bitwise value. */
     #define FREERTOS_FRAGMENTED_PACKET                ( 0x40 ) /* For internal use only, but also part of an 8-bit bitwise value. */
 

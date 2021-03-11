@@ -641,4 +641,11 @@
     #define ipconfigPROCESS_CUSTOM_ETHERNET_FRAMES    0
 #endif
 
+/* Setting to 1 will enable the reception of IPv4 multicast groups
+ * and the associated socket options that need to be set before
+ * a socket would properly receive multicast packets. */
+#ifndef ipconfigSUPPORT_IP_MULTICAST
+    #define ipconfigSUPPORT_IP_MULTICAST    ( 0 )
+#endif
+
 #endif /* FREERTOS_DEFAULT_IP_CONFIG_H */
