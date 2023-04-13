@@ -113,6 +113,13 @@ struct xETH_HEADER
 {
     MACAddress_t xDestinationAddress; /**< Destination address  0 + 6 = 6  */
     MACAddress_t xSourceAddress;      /**< Source address       6 + 6 = 12 */
+    #ifndef ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING
+    #error "ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING is not defined."
+    #endif
+    #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+        uint16_t usTPID;
+        uint16_t usTCI;
+    #endif
     uint16_t usFrameType;             /**< The EtherType field 12 + 2 = 14 */
 }
 #include "pack_struct_end.h"
@@ -270,6 +277,7 @@ struct xPacketSummary
 /* Ethernet frame types. */
     #define ipARP_FRAME_TYPE                   ( 0x0608U )
     #define ipIPv4_FRAME_TYPE                  ( 0x0008U )
+    #define ipVLAN_FRAME_TYPE                  ( 0x0081U )
 
 /* ARP related definitions. */
     #define ipARP_PROTOCOL_TYPE                ( 0x0008U )
@@ -294,6 +302,7 @@ struct xPacketSummary
 /* Ethernet frame types. */
     #define ipARP_FRAME_TYPE                   ( 0x0806U )
     #define ipIPv4_FRAME_TYPE                  ( 0x0800U )
+    #define ipVLAN_FRAME_TYPE                  ( 0x8100U )
 
 /* ARP related definitions. */
     #define ipARP_PROTOCOL_TYPE                ( 0x0800U )
@@ -319,6 +328,12 @@ struct xPacketSummary
  * defined const for quick reference. */
 extern const MACAddress_t xBroadcastMACAddress; /* all 0xff's */
 extern uint16_t usPacketIdentifier;
+
+#if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+    #define SPECIAL_VLAN_TAG_SIZE    ( 4 )
+#else
+    #define SPECIAL_VLAN_TAG_SIZE    ( 0 )
+#endif
 
 /** @brief The list that contains mappings between sockets and port numbers.
  *         Accesses to this list must be protected by critical sections of
