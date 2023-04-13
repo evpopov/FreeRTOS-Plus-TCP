@@ -54,6 +54,24 @@ BaseType_t xGetPhyLinkStatus( struct xNetworkInterface * pxInterface );
 
 #define MAC_IS_MULTICAST( pucMACAddressBytes )    ( ( pucMACAddressBytes[ 0 ] & 1U ) != 0U )
 #define MAC_IS_UNICAST( pucMACAddressBytes )      ( ( pucMACAddressBytes[ 0 ] & 1U ) == 0U )
+#if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+
+/* If a switch is used as the PHY, some devices offer special VLAN tags that tag frames for their ingress or egress port.
+ * When those thags are available and supported, the stack needs definitions for specifying these ports. */
+    enum ENUM_SWITCH_PORTS
+    {
+        ETHERNET_PORT_CPU = 0,
+        ETHERNET_PORT_0 = 0,
+        ETHERNET_PORT_1,
+        ETHERNET_PORT_2,
+
+        ETHERNET_PORT_AUTO = 125,
+        ETHERNET_PORT_ALL = 126,
+        ETHERNET_PORT_NONE = 127,
+    };
+    typedef enum ENUM_SWITCH_PORTS eSwitchPorts_t;
+#endif /* ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0) */
+
 
 /* *INDENT-OFF* */
 #ifdef __cplusplus

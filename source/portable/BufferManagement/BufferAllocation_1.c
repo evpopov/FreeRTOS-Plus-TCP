@@ -259,6 +259,12 @@ NetworkBufferDescriptor_t * pxGetNetworkBufferWithDescriptor( size_t xRequestedS
                     listIS_CONTAINED_WITHIN( &xFreeBuffersList, &( pxReturn->xBufferListItem ) ) )
                 {
                     ( void ) uxListRemove( &( pxReturn->xBufferListItem ) );
+
+                    #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+                    {
+                        pxReturn->ucEgressPort = ETHERNET_PORT_AUTO;
+                    }
+                    #endif
                 }
                 else
                 {
