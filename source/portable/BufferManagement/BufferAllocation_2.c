@@ -311,6 +311,12 @@ NetworkBufferDescriptor_t * pxGetNetworkBufferWithDescriptor( size_t xRequestedS
             {
                 pxReturn = ( NetworkBufferDescriptor_t * ) listGET_OWNER_OF_HEAD_ENTRY( &xFreeBuffersList );
                 ( void ) uxListRemove( &( pxReturn->xBufferListItem ) );
+
+                #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+                {
+                    pxReturn->ucEgressPort = ETHERNET_PORT_AUTO;
+                }
+                #endif
             }
             taskEXIT_CRITICAL();
 
