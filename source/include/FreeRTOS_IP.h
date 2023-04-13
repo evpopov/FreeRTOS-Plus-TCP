@@ -55,10 +55,14 @@
 
 /* The size of the Ethernet header is 14, meaning that 802.1Q VLAN tags
  * are not ( yet ) supported. */
-#define ipSIZE_OF_ETH_HEADER     14U
-#define ipSIZE_OF_IGMP_HEADER    8U
-#define ipSIZE_OF_UDP_HEADER     8U
-#define ipSIZE_OF_TCP_HEADER     20U
+#if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+    #define ipSIZE_OF_ETH_HEADER    18U
+#else
+    #define ipSIZE_OF_ETH_HEADER    14U
+#endif
+#define ipSIZE_OF_IGMP_HEADER       8U
+#define ipSIZE_OF_UDP_HEADER        8U
+#define ipSIZE_OF_TCP_HEADER        20U
 
 /* The maximum of int32 value. */
 #define ipINT32_MAX_VALUE        ( ( int32_t ) 0x7FFFFFFFU )
@@ -171,6 +175,9 @@ typedef struct xNETWORK_BUFFER
     uint16_t usBoundPort;                      /**< The port to which a transmitting socket is bound. */
     #if ( ipconfigUSE_LINKED_RX_MESSAGES != 0 )
         struct xNETWORK_BUFFER * pxNextBuffer; /**< Possible optimisation for expert users - requires network driver support. */
+    #endif
+    #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+        uint8_t ucEgressPort;
     #endif
 
 #define ul_IPAddress     xIPAddress.xIP_IPv4
