@@ -54,6 +54,8 @@
 /* This file is included to see if 'CONF_BOARD_ENABLE_CACHE' is defined. */
 #include "conf_board.h"
 
+#include "LAN9354/LAN9354.h"
+
 /* The SAME70 family has the possibility of caching RAM.
  * 'NETWORK_BUFFERS_CACHED' can be defined in either "conf_eth.h"
  * or in "FreeRTOSIPConfig.h".
@@ -189,7 +191,7 @@ static uint32_t prvEMACRxPoll( void );
 
 static BaseType_t prvSAM_NetworkInterfaceInitialise( NetworkInterface_t * pxInterface );
 static BaseType_t prvSAM_NetworkInterfaceOutput( NetworkInterface_t * pxInterface,
-                                                 NetworkBufferDescriptor_t * const pxBuffer,
+                                                 NetworkBufferDescriptor_t * const pxDescriptor,
                                                  BaseType_t bReleaseAfterSend );
 static BaseType_t prvSAM_GetPhyLinkStatus( NetworkInterface_t * pxInterface );
 
@@ -628,6 +630,26 @@ static BaseType_t prvSAM_NetworkInterfaceOutput( NetworkInterface_t * pxInterfac
         ulTransmitSize = GMAC_TX_UNITSIZE;
     }
 
+    #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+        EthernetHeader_t * pEthHdr = ( EthernetHeader_t * ) pxDescriptor->pucEthernetBuffer;
+        pEthHdr->usTPID = ipVLAN_FRAME_TYPE;
+
+        if( pxDescriptor->ucEgressPort == ETHERNET_PORT_AUTO )
+        {
+            pEthHdr->usTCI = FreeRTOS_htons( LAN9354_SPECIAL_TAG_REQUEST_ALR ); /*Request ALR lookup from the LAN9354 */
+        }
+        else if( pxDescriptor->ucEgressPort == ETHERNET_PORT_ALL )
+        {
+            uint16_t usEP = LAN9354_SPECIAL_TAG_NO_ALR | LAN9354_EGRESS_PORT_ALL;
+            pEthHdr->usTCI = FreeRTOS_htons( usEP );
+        }
+        else
+        {
+            uint16_t usEP = pxDescriptor->ucEgressPort & LAN9354_EGRESS_PORT_MASK;
+            pEthHdr->usTCI = FreeRTOS_htons( usEP );
+        }
+    #endif /* if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 ) */
+
     /* A do{}while(0) loop is introduced to allow the use of multiple break
      * statement. */
     do
@@ -794,6 +816,13 @@ static BaseType_t prvGMACInit( NetworkInterface_t * pxInterface )
     #endif /* ipconfigUSE_IPv6 */
 
     {
+        #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING == 1 )
+            /* A normal Ethernet frame is: 6(dst) + 6(src) + 2(type) + 1500(payload) + 4(fcs) = 1518 bytes long.
+             * Use of vlan tags require larger frames, so the GMAC needs to be instructed to allow those larger frames.
+             * Enable frames as big as 1536 bytes. */
+            gmac_enable_big_frame( GMAC, true );
+        #endif
+
         /* Set MDC clock divider. */
         gmac_set_mdc_clock( GMAC, sysclk_get_peripheral_hz() );
 
@@ -1331,6 +1360,10 @@ static uint32_t prvEMACRxPoll( void )
         }
         else
         {
+            #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+                /* If this is ever returned back to the network, make sure the output port property is set to the default value. */
+                pxNextNetworkBufferDescriptor->ucEgressPort = ETHERNET_PORT_AUTO;
+            #endif
             xRxEvent.pvData = ( void * ) pxNextNetworkBufferDescriptor;
 
             if( xSendEventStructToIPTask( &xRxEvent, xBlockTime ) != pdTRUE )

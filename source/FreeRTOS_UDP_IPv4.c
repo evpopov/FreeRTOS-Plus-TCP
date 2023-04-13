@@ -120,6 +120,9 @@ void vProcessGeneratedUDPPacket_IPv4( NetworkBufferDescriptor_t * const pxNetwor
             static const uint8_t ucDefaultPartUDPPacketHeader[] =
             {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* Ethernet source MAC address. */
+                #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+                    0x81, 0x00, 0x00, 0x00,          /* Placeholder for the special VLAN tags used in the LAN9354 switch*/
+                #endif
                 0x08, 0x00,                         /* Ethernet frame type. */
                 ipIPV4_VERSION_HEADER_LENGTH_MIN,   /* ucVersionHeaderLength. */
                 0x00,                               /* ucDifferentiatedServicesCode. */

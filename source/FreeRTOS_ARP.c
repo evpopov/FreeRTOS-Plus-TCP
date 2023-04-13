@@ -1346,6 +1346,10 @@
         {
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, /* Ethernet destination address. */
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* Ethernet source address. */
+            #if ( ipconfigENABLE_SPECAL_VLAN_PORT_TAGGING != 0 )
+                0x00, 0x00,
+                0x00, 0x00,
+            #endif
             0x08, 0x06,                         /* Ethernet frame type (ipARP_FRAME_TYPE). */
             0x00, 0x01,                         /* usHardwareType (ipARP_HARDWARE_TYPE_ETHERNET). */
             0x08, 0x00,                         /* usProtocolType. */
