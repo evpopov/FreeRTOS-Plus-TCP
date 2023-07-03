@@ -400,11 +400,11 @@
             /* It is time to send another Discover.  Increase the time
              * period, and if it has not got to the point of giving up - send
              * another discovery. */
-            EP_DHCPData.xDHCPTxPeriod <<= 1;
+            EP_DHCPData.xDHCPTxPeriod += dhcpINITIAL_DHCP_TX_PERIOD;
 
             if( EP_DHCPData.xDHCPTxPeriod <= ( ( TickType_t ) ipconfigMAXIMUM_DISCOVER_TX_PERIOD ) )
             {
-                if( xApplicationGetRandomNumber( &( EP_DHCPData.ulTransactionId ) ) != pdFALSE )
+                if( 1 /*xApplicationGetRandomNumber( &( EP_DHCPData.ulTransactionId ) ) != pdFALSE*/ )
                 {
                     EP_DHCPData.xDHCPTxTime = xTaskGetTickCount();
 
