@@ -6557,6 +6557,12 @@ BaseType_t FreeRTOS_GetIPType( ConstSocket_t xSocket )
                    /* There is no direct link between a multicast report and the socket(s) that require it.
                     * Store the IP version information in the report so the timer event knows whether to send an IGMP or MLD report. */
                    pxMRD->xMCastGroupAddress.xIs_IPv6 = pxSocket->bits.bIsIPv6;
+
+                   #if ( configUSE_LIST_DATA_INTEGRITY_CHECK_BYTES == 1 )
+                   {
+                       vListInitialiseItem( &( pxMRD->xListItem ));
+                   }
+                   #endif             
                    listSET_LIST_ITEM_OWNER( &( pxMRD->xListItem ), ( void * ) pxMRD );
                    pxMRD->pxInterface = pxMReq->pxMulticastNetIf;
 
